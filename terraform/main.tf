@@ -177,6 +177,12 @@ resource "aws_iam_role_policy" "s3_access" {
   })
 }
 
+# Attach AWS managed policy for SSM access
+resource "aws_iam_role_policy_attachment" "ssm_policy" {
+  role       = aws_iam_role.ec2_s3_access.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
 # IAM Instance Profile
 resource "aws_iam_instance_profile" "ec2_profile" {
   name = "video-processor-instance-profile"
@@ -195,37 +201,123 @@ data "aws_ami" "amazon_linux" {
 }
 
 # EC2 Instance
-# resource "aws_instance" "processor" {
-#  ami                    = data.aws_ami.amazon_linux.id
-#  instance_type          = "t3.medium"
-#  subnet_id              = aws_subnet.public.id
-#  vpc_security_group_ids = [aws_security_group.ec2.id]
-#  iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
-#  
-#  user_data = <<-EOF
-#    #!/bin/bash
-#    # Update system
-#    yum update -y
-#    
-#    # Install Docker
-#    yum install -y docker
-#    systemctl start docker
-#    systemctl enable docker
-#    
-#    # Pull Docker image
-#    docker pull gvill005/video-processor:latest
-#    
-#    echo "Setup complete!" > /home/ec2-user/setup-complete.txt
-#  EOF
-#  
-#  tags = {
-#    Name    = "video-processor-instance"
-#    Project = "DevOps Video Pipeline"
-#  }
-#}
-#
-## Output the EC2 public IP
-#output "ec2_public_ip" {
-#  value       = aws_instance.processor.public_ip
-#  description = "Public IP of the EC2 instance"
-#}
+ resource "aws_instance" "processor" {
+  ami                    = data.aws_ami.amazon_linux.id
+  instance_type          = "t3.medium"
+  subnet_id              = aws_subnet.public.id
+  vpc_security_group_ids = [aws_security_group.ec2.id]
+  iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
+  key_name               = "video-processor-key"
+
+  root_block_device {
+    volume_size = 20
+    volume_type = "gp3"
+  }
+
+  user_data = <<-EOF
+    #!/bin/bash
+    # Update system
+    yum update -y
+    
+    # Install Docker
+    yum install -y docker
+    systemctl start docker
+    systemctl enable docker
+    
+    # Add ec2-user to docker group
+    usermod -a -G docker ec2-user
+    
+    # Pull Docker image v3
+    docker pull gvill005/video-processor:v3
+    
+    # Get SQS queue URL
+    QUEUE_URL=$(aws sqs get-queue-url --queue-name video-processing-queue --region us-west-2 --query 'QueueUrl' --output text)
+    
+    # Start container in polling mode (runs in background)
+    docker run -d --restart unless-stopped \
+      -e AWS_DEFAULT_REGION=us-west-2 \
+      gvill005/video-processor:v3 \
+      python process_video.py poll "$QUEUE_URL" json-output-gvill005-devops
+    
+    echo "Setup complete!" > /home/ec2-user/setup-complete.txt
+  EOF
+  
+  tags = {
+    Name    = "video-processor-instance"
+    Project = "DevOps Video Pipeline"
+  }
+}
+
+# Output the EC2 public IP
+output "ec2_public_ip" {
+  value       = aws_instance.processor.public_ip
+  description = "Public IP of the EC2 instance"
+}
+
+# SQS Queue for video processing jobs
+resource "aws_sqs_queue" "video_processing" {
+  name                       = "video-processing-queue"
+  visibility_timeout_seconds = 600  # 10 minutes - should be longer than max video processing time
+  message_retention_seconds  = 86400  # 24 hours
+  
+  tags = {
+    Name    = "video-processing-queue"
+    Project = "DevOps Video Pipeline"
+  }
+}
+
+# S3 Event Notification to SQS
+resource "aws_s3_bucket_notification" "video_upload" {
+  bucket = aws_s3_bucket.video_input.id
+  
+  queue {
+    queue_arn     = aws_sqs_queue.video_processing.arn
+    events        = ["s3:ObjectCreated:*"]
+    filter_suffix = ".mp4"
+  }
+}
+
+# SQS Queue Policy to allow S3 to send messages
+resource "aws_sqs_queue_policy" "video_processing" {
+  queue_url = aws_sqs_queue.video_processing.id
+  
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Service = "s3.amazonaws.com"
+        }
+        Action   = "SQS:SendMessage"
+        Resource = aws_sqs_queue.video_processing.arn
+        Condition = {
+          ArnEquals = {
+            "aws:SourceArn" = aws_s3_bucket.video_input.arn
+          }
+        }
+      }
+    ]
+  })
+}
+
+# Update IAM policy to allow EC2 to access SQS
+resource "aws_iam_role_policy" "sqs_access" {
+  name = "sqs-access-policy"
+  role = aws_iam_role.ec2_s3_access.id
+  
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage",
+          "sqs:GetQueueAttributes"
+        ]
+        Resource = aws_sqs_queue.video_processing.arn
+      }
+    ]
+  })
+}
