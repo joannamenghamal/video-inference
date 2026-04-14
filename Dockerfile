@@ -1,24 +1,24 @@
-FROM python:3.11-slim
+# Use AWS Lambda Python base image
+FROM public.ecr.aws/lambda/python:3.11
 
-# Install system dependencies for OpenCV
-RUN apt-get update && apt-get install -y \
-    libgl1 \
-    libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Set working directory
-WORKDIR /app
+# Install system dependencies
+RUN yum install -y \
+    mesa-libGL \
+    glib2 \
+    libgomp \
+    gcc \
+    gcc-c++ \
+    make \
+    && yum clean all
 
 # Copy requirements and install
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir --only-binary :all: -r requirements.txt
 
 # Copy application code
-COPY process_video.py .
-COPY short_test_footage.mp4 .
+COPY process_video.py ${LAMBDA_TASK_ROOT}/
+COPY lambda_handler.py ${LAMBDA_TASK_ROOT}/
 
-# Pre-download YOLO model to reduce runtime
-RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
-
-# Default command
-CMD ["python", "process_video.py"]
+# Set handler (use Lambda's default entrypoint)
+CMD ["lambda_handler.lambda_handler"]
