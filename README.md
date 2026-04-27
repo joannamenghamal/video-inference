@@ -1,0 +1,206 @@
+# Video Inference Pipeline
+
+A fully serverless video analysis pipeline that uses **YOLO** for real-time object detection and **Amazon Bedrock** for natural language summaries. Includes an agentic chat UI to query results.
+
+---
+
+## Architecture
+
+```
+Upload .mp4
+    │
+    ▼
+┌─────────────────┐
+│   S3 (input)    │  video-input-{id}
+└────────┬────────┘
+         │ S3 Event Trigger
+         ▼
+┌─────────────────┐
+│  AWS Lambda     │  video-processor (container image)
+│                 │
+│  1. YOLO v8     │  ← detects people, cars, trucks, etc. per frame
+│  2. Aggregate   │  ← avg/peak counts across all frames
+│  3. Bedrock     │  ← Amazon Nova Lite writes natural language summary
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│   S3 (output)   │  json-output-{id}/results/{video}.json
+└─────────────────┘
+
+Chat UI
+    │
+    ▼
+┌─────────────────┐
+│  S3 Website     │  static HTML chat interface
+└────────┬────────┘
+         │ fetch POST /chat
+         ▼
+┌─────────────────┐
+│  API Gateway    │  HTTP API
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  AWS Lambda     │  chat-agent (Python zip)
+│                 │
+│  Bedrock Agent  │  ← Amazon Nova Lite with tool use
+│  Tools:         │
+│  • list videos  │  ← lists processed results from S3
+│  • get analysis │  ← fetches detection stats + summary
+│  • compare      │  ← side-by-side comparison of two videos
+└─────────────────┘
+```
+
+---
+
+## Live Demo
+
+| Resource | URL |
+|---|---|
+| Chat UI | http://chat-frontend-72708bd7.s3-website-us-west-2.amazonaws.com |
+| Chat API | https://7f8boyvvs3.execute-api.us-west-2.amazonaws.com/chat |
+
+---
+
+## Project Structure
+
+```
+.
+├── Dockerfile              # Lambda container image (YOLO pipeline)
+├── lambda_handler.py       # Video processor Lambda handler
+├── process_video.py        # YOLO inference + S3 upload logic
+├── chat_lambda.py          # Chat agent Lambda (Bedrock + tool use)
+├── requirements.txt        # Python dependencies
+├── templates/
+│   └── index.html          # Chat UI (served via S3 static website)
+└── terraform/
+    └── main.tf             # All AWS infrastructure as code
+```
+
+---
+
+## How It Works
+
+### 1. Video Processing Pipeline
+
+Upload a `.mp4` to the S3 input bucket. This triggers the `video-processor` Lambda automatically.
+
+The Lambda:
+1. Downloads the video to `/tmp`
+2. Runs **YOLOv8n** on every frame — detecting people, cars, trucks, buses, bicycles, etc.
+3. Aggregates detections across all frames (avg per frame, peak counts)
+4. Sends the aggregated stats to **Amazon Bedrock** (Nova Lite) for a natural language summary
+5. Saves the full result JSON to the S3 output bucket
+
+**Output JSON format:**
+```json
+{
+  "summary_stats": {
+    "total_frames": 1123,
+    "avg_people_per_frame": 1.99,
+    "avg_cars_per_frame": 4.15,
+    "peak_people_in_frame": 9
+  },
+  "bedrock_summary": "The footage shows moderate traffic with...",
+  "raw_data": { "frames": [...] }
+}
+```
+
+### 2. Agentic Chat UI
+
+The chat UI lets you ask natural language questions about processed videos. The backend Lambda uses **Amazon Bedrock's Converse API** with tool use — it decides which tools to call based on your question.
+
+**Available tools:**
+- `list_processed_videos` — shows all analyzed videos
+- `get_analysis` — fetches stats and summary for a specific video
+- `compare_analyses` — compares two videos side by side
+
+**Example questions:**
+- *"What videos have been processed?"*
+- *"Summarise the traffic in short_test_footage"*
+- *"What were the peak pedestrian counts?"*
+- *"How heavy was the traffic?"*
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Object detection | YOLOv8n (Ultralytics) |
+| Language model | Amazon Bedrock — Nova Lite (`us.amazon.nova-lite-v1:0`) |
+| Video pipeline | AWS Lambda (container image, ECR) |
+| Chat backend | AWS Lambda (Python zip) + API Gateway HTTP API |
+| Frontend | S3 static website |
+| Infrastructure | Terraform |
+| Storage | S3 (input video, output JSON) |
+| Logs | CloudWatch |
+
+---
+
+## Deploying From Scratch
+
+You need AWS credentials configured and Terraform installed.
+
+```bash
+# 1. Build and push the YOLO container image
+aws ecr get-login-password --region us-west-2 | \
+  docker login --username AWS --password-stdin <account_id>.dkr.ecr.us-west-2.amazonaws.com
+
+docker buildx build \
+  --platform linux/amd64 \
+  --provenance=false \
+  --push \
+  -t <account_id>.dkr.ecr.us-west-2.amazonaws.com/video-processor:v1 \
+  .
+
+# 2. Deploy all infrastructure
+cd terraform
+terraform init
+terraform apply
+
+# 3. Update Lambda to use the pushed image
+aws lambda update-function-code \
+  --function-name video-processor \
+  --image-uri <account_id>.dkr.ecr.us-west-2.amazonaws.com/video-processor:v1 \
+  --region us-west-2
+```
+
+After `terraform apply`, the outputs show your live URLs:
+```
+chat_url        = "http://chat-frontend-....s3-website-us-west-2.amazonaws.com"
+chat_api_endpoint = "https://....execute-api.us-west-2.amazonaws.com/chat"
+input_bucket    = "video-input-..."
+output_bucket   = "json-output-..."
+```
+
+### Testing the pipeline
+
+```bash
+# Upload a video to trigger processing
+aws s3 cp your_video.mp4 s3://<input_bucket>/your_video.mp4 --region us-west-2
+
+# Watch logs live
+aws logs tail /aws/lambda/video-processor --follow --region us-west-2
+
+# Download the result
+aws s3 cp s3://<output_bucket>/results/your_video.json - | python3 -m json.tool
+```
+
+### Testing the chat API
+
+```bash
+curl -s -X POST "<chat_api_endpoint>" \
+  -H "Content-Type: application/json" \
+  -d '{"conversation":[{"role":"user","content":[{"type":"text","text":"What videos have been processed?"}]}]}' \
+  | python3 -m json.tool
+```
+
+---
+
+## Notes
+
+- The YOLO model weights (`yolov8n.pt`) are baked into the Docker image at build time — Lambda's filesystem is read-only at runtime
+- The Docker image must be built with `--platform linux/amd64` and `--provenance=false` (required for Lambda container images from Apple Silicon)
+- Terraform state is local — if teammates redeploy, they get separate AWS resources with different bucket name suffixes
