@@ -29,3 +29,7 @@ Thumbs.db
 # Test outputs
 detections_output.json
 test_output.json
+output.json
+
+# Build artifacts
+terraform/chat_lambda.zip

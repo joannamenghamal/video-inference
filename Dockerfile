@@ -20,5 +20,9 @@ RUN pip install --upgrade pip && \
 COPY process_video.py ${LAMBDA_TASK_ROOT}/
 COPY lambda_handler.py ${LAMBDA_TASK_ROOT}/
 
+# Download YOLO weights at build time so they're baked into the image
+# (Lambda's filesystem is read-only at runtime except /tmp)
+RUN cd ${LAMBDA_TASK_ROOT} && python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
+
 # Set handler (use Lambda's default entrypoint)
 CMD ["lambda_handler.lambda_handler"]
