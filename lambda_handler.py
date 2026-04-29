@@ -61,12 +61,11 @@ def lambda_handler(event, context):
         yolo_results = json.load(f)
 
     # call bedrock
-    bedrock = boto3.client('bedrock-runtime', region_name='us-east-2')
-
+    bedrock = boto3.client('bedrock-runtime', region_name='us-west-2')
     aggregated = summarize_detections(yolo_results)
 
     response = bedrock.invoke_model(
-        modelId='anthropic.claude-haiku-4-20250514',
+        modelId='anthropic.claude-haiku-4-5-20251001-v1:0',
         body=json.dumps({
             "anthropic_version": "bedrock-2023-05-31",
             "max_tokens": 512,
