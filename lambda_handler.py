@@ -60,20 +60,20 @@ def lambda_handler(event, context):
     with open(output_path, 'r') as f:
         yolo_results = json.load(f)
     
-    # call bedrock
+# call bedrock
     bedrock = boto3.client('bedrock-runtime', region_name='us-west-2')
 
     aggregated = summarize_detections(yolo_results)
 
     response = bedrock.invoke_model(
-        modelId='amazon.nova-micro-v1:0',
+        modelId='us.anthropic.claude-3-haiku-20240307-v1:0',
         body=json.dumps({
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": 512,
             "messages": [
                 {
                     "role": "user",
-                    "content": [
-                        {
-                            "text": f"""Summarize this traffic analysis:
+                    "content": f"""Summarize this traffic analysis:
 
 {json.dumps(aggregated)}
 
@@ -81,19 +81,14 @@ Focus on:
 - traffic patterns
 - pedestrian activity
 - notable trends"""
-                        }
-                    ]
                 }
-            ],
-            "inferenceConfig": {
-                "maxTokens": 512
-            }
+            ]
         })
     )
 
     # Extract the summary from the response
     bedrock_response = json.loads(response['body'].read())
-    summary = bedrock_response['output']['message']['content'][0]['text']
+    summary = bedrock_response['content'][0]['text']
     print("BEDROCK SUMMARY:")
     print(summary)
 
