@@ -413,6 +413,9 @@ resource "aws_cognito_user_pool_client" "client" {
   supported_identity_providers         = ["COGNITO"]
   callback_urls = [
     "http://localhost:3000",
+    "http://localhost:5173", 
+    "http://localhost:8080", 
+    "http://localhost:8000",
     "https://example.com" 
   ]
 }
