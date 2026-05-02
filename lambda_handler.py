@@ -59,49 +59,95 @@ def lambda_handler(event, context):
 
     with open(output_path, 'r') as f:
         yolo_results = json.load(f)
-
+    
     # call bedrock
     bedrock = boto3.client('bedrock-runtime', region_name='us-west-2')
+
     aggregated = summarize_detections(yolo_results)
 
     response = bedrock.invoke_model(
-        modelId='anthropic.claude-sonnet-4-6',
+        modelId='amazon.nova-micro-v1:0',
         body=json.dumps({
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 512,
             "messages": [
                 {
                     "role": "user",
-                    "content": f"""
-                    Summarize this traffic analysis:
+                    "content": [
+                        {
+                            "text": f"""Summarize this traffic analysis:
 
-                    {json.dumps(aggregated)}
+{json.dumps(aggregated)}
 
-                    Focus on:
-                    - traffic patterns
-                    - pedestrian activity
-                    - notable trends
-                    """
+Focus on:
+- traffic patterns
+- pedestrian activity
+- notable trends"""
+                        }
+                    ]
                 }
-            ]
+            ],
+            "inferenceConfig": {
+                "maxTokens": 512
+            }
         })
     )
 
     # Extract the summary from the response
     bedrock_response = json.loads(response['body'].read())
-    summary = bedrock_response['content'][0]['text']
+    summary = bedrock_response['output']['message']['content'][0]['text']
     print("BEDROCK SUMMARY:")
     print(summary)
 
     # Add summary to output
     final_output = {
-    "summary_stats": aggregated,
-    "bedrock_summary": summary,
-    "raw_data": yolo_results
+        "summary_stats": aggregated,
+        "bedrock_summary": summary,
+        "raw_data": yolo_results
     }
 
     with open(output_path, 'w') as f:
         json.dump(final_output, f, indent=2)
+    # # call bedrock
+    # bedrock = boto3.client('bedrock-runtime', region_name='us-west-2')
+    # aggregated = summarize_detections(yolo_results)
+
+    # response = bedrock.invoke_model(
+    #     modelId='anthropic.claude-sonnet-4-6',
+    #     body=json.dumps({
+    #         "anthropic_version": "bedrock-2023-05-31",
+    #         "max_tokens": 512,
+    #         "messages": [
+    #             {
+    #                 "role": "user",
+    #                 "content": f"""
+    #                 Summarize this traffic analysis:
+
+    #                 {json.dumps(aggregated)}
+
+    #                 Focus on:
+    #                 - traffic patterns
+    #                 - pedestrian activity
+    #                 - notable trends
+    #                 """
+    #             }
+    #         ]
+    #     })
+    # )
+
+    # # Extract the summary from the response
+    # bedrock_response = json.loads(response['body'].read())
+    # summary = bedrock_response['content'][0]['text']
+    # print("BEDROCK SUMMARY:")
+    # print(summary)
+
+    # # Add summary to output
+    # final_output = {
+    # "summary_stats": aggregated,
+    # "bedrock_summary": summary,
+    # "raw_data": yolo_results
+    # }
+
+    # with open(output_path, 'w') as f:
+    #     json.dump(final_output, f, indent=2)
 
 
     # Upload JSON to output bucket
