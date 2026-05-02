@@ -182,7 +182,7 @@ resource "aws_lambda_function" "video_processor" {
   function_name = "video-processor"
   role          = aws_iam_role.lambda_execution.arn
   package_type  = "Image"
-  image_uri     = "602600555553.dkr.ecr.us-west-2.amazonaws.com/video-processor:v9"
+  image_uri     = "602600555553.dkr.ecr.us-west-2.amazonaws.com/video-processor:v10"
   timeout       = 900  # 15 minutes (max for Lambda)
   memory_size   = 3008  # 3GB (max for Lambda)
 
