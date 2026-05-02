@@ -66,7 +66,7 @@ def lambda_handler(event, context):
     aggregated = summarize_detections(yolo_results)
 
     response = bedrock.invoke_model(
-        modelId='us.anthropic.claude-3-haiku-20240307-v1:0',
+        modelId='claude-haiku-4-5-20251001',
         body=json.dumps({
             "anthropic_version": "bedrock-2023-05-31",
             "max_tokens": 512,
