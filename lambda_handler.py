@@ -73,14 +73,20 @@ def lambda_handler(event, context):
             "messages": [
                 {
                     "role": "user",
-                    "content": f"""Summarize this traffic analysis:
+                    "content": f"""You are an AI system analyzing traffic footage for an autonomous vehicle fleet. 
+
+Analyze this detection data and provide actionable insights:
 
 {json.dumps(aggregated)}
 
 Focus on:
-- traffic patterns
-- pedestrian activity
-- notable trends"""
+- Traffic flow patterns and congestion levels
+- Pedestrian safety considerations and crosswalk activity
+- Peak activity periods that may require route adjustments
+- Infrastructure observations (traffic lights, signage, road conditions)
+- Specific recommendations for autonomous vehicle navigation in this environment
+
+Provide concise, actionable analysis for fleet coordination."""
                 }
             ]
         })
