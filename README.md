@@ -1,6 +1,6 @@
 # Video Inference Pipeline
 
-A fully serverless video analysis pipeline that uses **YOLO** for real-time object detection and **Amazon Bedrock** for natural language summaries. Includes an agentic chat UI to query results.
+A fully serverless video analysis pipeline that uses **YOLO** for real-time object detection and **Amazon Bedrock** for natural language summaries. Includes a chat UI with natural language querying of processed results.
 
 ---
 
@@ -20,7 +20,7 @@ Upload .mp4
 │                 │
 │  1. YOLO v8     │  ← detects people, cars, trucks, etc. per frame
 │  2. Aggregate   │  ← avg/peak counts across all frames
-│  3. Bedrock     │  ← Amazon Nova Lite writes natural language summary
+│  3. Bedrock     │  ← Claude Haiku 4.5 writes natural language summary
 └────────┬────────┘
          │
          ▼
@@ -28,11 +28,16 @@ Upload .mp4
 │   S3 (output)   │  json-output-{id}/results/{video}.json
 └─────────────────┘
 
-Chat UI
+Chat UI Flow
     │
     ▼
 ┌─────────────────┐
-│  S3 Website     │  static HTML chat interface
+│  AWS Cognito    │  User authentication
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  S3 Website     │  chat-frontend-{id} (static HTML)
 └────────┬────────┘
          │ fetch POST /chat
          ▼
@@ -42,13 +47,9 @@ Chat UI
          │
          ▼
 ┌─────────────────┐
-│  AWS Lambda     │  chat-agent (Python zip)
-│                 │
-│  Bedrock Agent  │  ← Amazon Nova Lite with tool use
-│  Tools:         │
-│  • list videos  │  ← lists processed results from S3
-│  • get analysis │  ← fetches detection stats + summary
-│  • compare      │  ← side-by-side comparison of two videos
+│  Chat Lambda    │  Reads all S3 JSON files
+│                 │  Sends to Bedrock for synthesis
+│  Amazon Bedrock │  ← Claude Haiku 4.5 generates responses
 └─────────────────┘
 ```
 
@@ -70,7 +71,7 @@ Chat UI
 ├── Dockerfile              # Lambda container image (YOLO pipeline)
 ├── lambda_handler.py       # Video processor Lambda handler
 ├── process_video.py        # YOLO inference + S3 upload logic
-├── chat_lambda.py          # Chat agent Lambda (Bedrock + tool use)
+├── chat_lambda.py          # Chat Lambda (reads S3, calls Bedrock)
 ├── requirements.txt        # Python dependencies
 ├── templates/
 │   └── index.html          # Chat UI (served via S3 static website)
@@ -84,13 +85,13 @@ Chat UI
 
 ### 1. Video Processing Pipeline
 
-Upload a `.mp4` to the S3 input bucket. This triggers the `video-processor` Lambda automatically.
+Upload a `.mp4` to the S3 input bucket. This triggers the `video-processor` Lambda automatically via S3 event notification.
 
 The Lambda:
 1. Downloads the video to `/tmp`
-2. Runs **YOLOv8n** on every frame — detecting people, cars, trucks, buses, bicycles, etc.
+2. Runs **YOLOv8n** on every frame — detecting people, cars, trucks, buses, bicycles, traffic lights, etc.
 3. Aggregates detections across all frames (avg per frame, peak counts)
-4. Sends the aggregated stats to **Amazon Bedrock** (Nova Lite) for a natural language summary
+4. Sends the aggregated stats to **Amazon Bedrock** (Claude Haiku 4.5) for a natural language summary focused on traffic patterns, pedestrian safety, and AV fleet navigation recommendations
 5. Saves the full result JSON to the S3 output bucket
 
 **Output JSON format:**
@@ -107,20 +108,43 @@ The Lambda:
 }
 ```
 
-### 2. Agentic Chat UI
+### 2. Chat Interface with Authentication
 
-The chat UI lets you ask natural language questions about processed videos. The backend Lambda uses **Amazon Bedrock's Converse API** with tool use — it decides which tools to call based on your question.
+The chat interface provides natural language querying of processed video analysis results. 
 
-**Available tools:**
-- `list_processed_videos` — shows all analyzed videos
-- `get_analysis` — fetches stats and summary for a specific video
-- `compare_analyses` — compares two videos side by side
+**Flow:**
+1. Users authenticate through **AWS Cognito** (manages credentials and access control)
+2. After authentication, users access the S3-hosted static website
+3. When a user submits a question, it's sent via API Gateway to the Chat Lambda
+4. Chat Lambda reads all processed JSON files from the S3 output bucket
+5. Lambda sends the user's question and complete analysis data to **Amazon Bedrock**
+6. Bedrock (Claude Haiku 4.5) synthesizes information across all videos to generate natural language responses
 
-**Example questions:**
-- *"What videos have been processed?"*
-- *"Summarise the traffic in short_test_footage"*
-- *"What were the peak pedestrian counts?"*
-- *"How heavy was the traffic?"*
+This enables comparative queries like:
+- *"Which video had the highest pedestrian activity?"*
+- *"Compare traffic density across all videos"*
+- *"Summarize the traffic patterns in short_test_footage"*
+
+No manual JSON parsing required — Bedrock handles synthesis automatically.
+
+---
+
+## CI/CD Pipeline
+
+Automated deployment using **GitHub Actions**:
+
+**Workflow:**
+1. Triggers on code changes to main branch (`lambda_handler.py`, `process_video.py`, `requirements.txt`, `Dockerfile`)
+2. Builds Docker image for `linux/amd64` platform
+3. Pushes to Amazon ECR
+4. Updates Lambda function with new image
+
+**Benefits:**
+- Eliminates manual deployment steps
+- Ensures consistent, repeatable deployments
+- Can also be triggered manually via GitHub Actions interface
+
+After initial Terraform setup, no manual Docker commands needed — just `git push`!
 
 ---
 
@@ -129,11 +153,13 @@ The chat UI lets you ask natural language questions about processed videos. The 
 | Layer | Technology |
 |---|---|
 | Object detection | YOLOv8n (Ultralytics) |
-| Language model | Amazon Bedrock — Nova Lite (`us.amazon.nova-lite-v1:0`) |
+| Language model | Amazon Bedrock — Claude Haiku 4.5 (`us.anthropic.claude-haiku-4-5-20251001-v1:0`) |
 | Video pipeline | AWS Lambda (container image, ECR) |
 | Chat backend | AWS Lambda (Python zip) + API Gateway HTTP API |
+| Authentication | AWS Cognito |
 | Frontend | S3 static website |
 | Infrastructure | Terraform |
+| CI/CD | GitHub Actions, Amazon ECR |
 | Storage | S3 (input video, output JSON) |
 | Logs | CloudWatch |
 
@@ -193,9 +219,29 @@ aws s3 cp s3://<output_bucket>/results/your_video.json - | python3 -m json.tool
 ```bash
 curl -s -X POST "<chat_api_endpoint>" \
   -H "Content-Type: application/json" \
-  -d '{"conversation":[{"role":"user","content":[{"type":"text","text":"What videos have been processed?"}]}]}' \
+  -d '{"conversation":[{"role":"user","content":[{"type":"text","text":"Which video had the highest pedestrian activity?"}]}]}' \
   | python3 -m json.tool
 ```
+
+---
+
+## Challenges & Solutions
+
+### Docker Image Size
+- **Problem:** 8GB disk too small for 17GB image
+- **Solution:** Increased to 20GB EBS volumes, optimized image layers
+
+### AI Model Compatibility
+- **Problem:** 14 Docker iterations required; legacy Bedrock model IDs deprecated, direct model IDs inactive in us-west-2
+- **Solution:** Switched to cross-region inference profiles (`us.anthropic.claude-haiku-4-5-20251001-v1:0`) and submitted use case details for Anthropic model access
+
+### Team Coordination
+- **Problem:** Simultaneous development prior to CI/CD integration
+- **Solution:** Clear communication + Git workflows
+
+### Cost Management
+- **Problem:** EC2 instances expensive to scale
+- **Solution:** Lambda functions (serverless, pay-per-execution only)
 
 ---
 
@@ -204,3 +250,4 @@ curl -s -X POST "<chat_api_endpoint>" \
 - The YOLO model weights (`yolov8n.pt`) are baked into the Docker image at build time — Lambda's filesystem is read-only at runtime
 - The Docker image must be built with `--platform linux/amd64` and `--provenance=false` (required for Lambda container images from Apple Silicon)
 - Terraform state is local — if teammates redeploy, they get separate AWS resources with different bucket name suffixes
+- S3 event notifications automatically trigger Lambda when videos are uploaded — no polling required
