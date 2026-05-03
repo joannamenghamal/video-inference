@@ -400,24 +400,47 @@ resource "random_id" "id" {
 }
 
 resource "aws_cognito_user_pool" "pool" {
-  name = "video-inference-pool-v2"
+  name                     = "video-inference-pool-v2"
   auto_verified_attributes = ["email"]
+  
+  # FIX: This makes the UI ask for "Email" instead of "Username"
+  username_attributes      = ["email"]
+
+  admin_create_user_config {
+    allow_admin_create_user_only = false
+  }
+
+  # FIX: Ensures the 6-digit code is sent to the user's email
+  verification_message_template {
+    default_email_option = "CONFIRM_WITH_CODE"
+  }
 }
 
 resource "aws_cognito_user_pool_client" "client" {
   name         = "video-inference-client"
   user_pool_id = aws_cognito_user_pool.pool.id
+
+  explicit_auth_flows = ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"]
+
+  access_token_validity  = 60
+  id_token_validity      = 60
+  refresh_token_validity = 30
+  
+  token_validity_units {
+    access_token  = "minutes"
+    id_token      = "minutes"
+    refresh_token = "days"
+  }
+
   allowed_oauth_flows_user_pool_client = true
   allowed_oauth_flows                  = ["implicit"]
   allowed_oauth_scopes                 = ["email", "openid", "profile"]
   supported_identity_providers         = ["COGNITO"]
+
   callback_urls = [
-    "http://localhost:3000",
-    "http://localhost:5173",
-    "http://localhost:8080",
-    "http://localhost:8000",
-    "http://${aws_s3_bucket_website_configuration.frontend.website_endpoint}",
-    "https://example.com"
+  "https://${aws_s3_bucket.frontend.bucket_regional_domain_name}/index.html",
+  "https://localhost:3000",
+  "https://example.com"
   ]
 }
 
