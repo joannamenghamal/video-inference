@@ -267,7 +267,7 @@ resource "aws_apigatewayv2_api" "chat" {
   cors_configuration {
     allow_origins = ["*"]
     allow_methods = ["POST", "OPTIONS"]
-    allow_headers = ["Content-Type"]
+    allow_headers = ["Content-Type", "Authorization"]
   }
 }
 
@@ -393,6 +393,22 @@ output "chat_api_endpoint" {
   description = "API Gateway endpoint for the chat agent"
 }
 
+#Cognito login url
+output "cognito_login_url" {
+  value = "https://${aws_cognito_user_pool_domain.main.domain}.auth.us-west-2.amazoncognito.com/login?client_id=${aws_cognito_user_pool_client.client.id}&response_type=token&scope=email+openid+profile&redirect_uri=https://${aws_s3_bucket.frontend.bucket_regional_domain_name}/index.html"
+  description = "Cognito sign-in URL - use this to authenticate (HTTPS)"
+}
+
+output "cognito_user_pool_id" {
+  value = aws_cognito_user_pool.pool.id
+  description = "Cognito User Pool ID"
+}
+
+output "cognito_client_id" {
+  value = aws_cognito_user_pool_client.client.id
+  description = "Cognito App Client ID"
+}
+
 # --- COGNITO SECURITY BLOCK ---
 
 resource "random_id" "id" {
@@ -438,12 +454,11 @@ resource "aws_cognito_user_pool_client" "client" {
   supported_identity_providers         = ["COGNITO"]
 
   callback_urls = [
-  "https://${aws_s3_bucket.frontend.bucket_regional_domain_name}/index.html",
-  "https://localhost:3000",
-  "https://example.com"
+    "https://${aws_s3_bucket.frontend.bucket_regional_domain_name}/index.html",
+    "https://localhost:3000",
+    "https://example.com"
   ]
 }
-
 resource "aws_cognito_user_pool_domain" "main" {
   domain       = "video-auth-${random_id.id.hex}" 
   user_pool_id = aws_cognito_user_pool.pool.id

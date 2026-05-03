@@ -39,6 +39,7 @@
     #send{background:#6366f1;border:none;border-radius:12px;width:48px;height:48px;cursor:pointer;color:#fff;font-size:18px;display:flex;align-items:center;justify-content:center;transition:background .15s;flex-shrink:0}
     #send:hover{background:#4f46e5}
     #send:disabled{background:#2d3748;cursor:not-allowed}
+    .auth-error{background:#dc2626;color:#fff;padding:12px 24px;text-align:center;font-size:13px}
   </style>
 </head>
 <body>
@@ -72,6 +73,44 @@
   const inputEl = document.getElementById("input");
   const sendBtn = document.getElementById("send");
 
+  // Extract JWT token from URL hash after Cognito redirect
+  function extractTokenFromHash() {
+    const hash = window.location.hash.substring(1); // Remove '#'
+    if (!hash) return null;
+    
+    const params = new URLSearchParams(hash);
+    const idToken = params.get('id_token');
+    
+    if (idToken) {
+      // Store token in localStorage
+      localStorage.setItem('id_token', idToken);
+      // Clean up URL (remove hash)
+      window.history.replaceState(null, null, window.location.pathname);
+      return idToken;
+    }
+    return null;
+  }
+
+  // Get stored token or extract from URL
+  function getToken() {
+    // First check URL hash (from Cognito redirect)
+    const tokenFromHash = extractTokenFromHash();
+    if (tokenFromHash) return tokenFromHash;
+    
+    // Otherwise get from localStorage
+    return localStorage.getItem('id_token');
+  }
+
+  // Check for token on page load
+  const token = getToken();
+  if (!token) {
+    // Show auth error if no token
+    const authError = document.createElement('div');
+    authError.className = 'auth-error';
+    authError.textContent = '⚠️ Authentication required. Please sign in to use this chat.';
+    document.body.insertBefore(authError, document.body.firstChild);
+  }
+
   inputEl.addEventListener("keydown", e => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMsg(); }
   });
@@ -104,21 +143,40 @@
   async function sendMsg() {
     const text = inputEl.value.trim();
     if (!text) return;
+    
+    // Check for token
+    const currentToken = getToken();
+    if (!currentToken) {
+      addMsg("agent", "⚠️ Authentication required. Please sign in to continue.");
+      return;
+    }
+    
     inputEl.value = "";
     sendBtn.disabled = true;
     addMsg("user", text);
     conversation.push({ role: "user", content: [{ type: "text", text }] });
     const typing = addTyping();
+    
     try {
       const res = await fetch(LAMBDA_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${currentToken}`  // ← ADD JWT TOKEN HERE!
+        },
         body: JSON.stringify({ conversation }),
       });
+      
       const data = await res.json();
       typing.remove();
-      if (data.error) { addMsg("agent", "Error: " + data.error); }
-      else {
+      
+      if (res.status === 401) {
+        // Token expired or invalid
+        localStorage.removeItem('id_token');
+        addMsg("agent", "⚠️ Your session has expired. Please sign in again.");
+      } else if (data.error) {
+        addMsg("agent", "Error: " + data.error);
+      } else {
         addMsg("agent", data.reply);
         conversation.push({ role: "assistant", content: [{ type: "text", text: data.reply }] });
       }
@@ -126,6 +184,7 @@
       typing.remove();
       addMsg("agent", "Connection error: " + err.message);
     }
+    
     sendBtn.disabled = false;
     inputEl.focus();
   }
