@@ -403,14 +403,14 @@ resource "aws_cognito_user_pool" "pool" {
   name                     = "video-inference-pool-v2"
   auto_verified_attributes = ["email"]
   
-  # FIX: This makes the UI ask for "Email" instead of "Username"
+  #This makes the UI ask for "Email" instead of "Username"
   username_attributes      = ["email"]
 
   admin_create_user_config {
     allow_admin_create_user_only = false
   }
 
-  # FIX: Ensures the 6-digit code is sent to the user's email
+  #Ensures the 6-digit code is sent to the user's email
   verification_message_template {
     default_email_option = "CONFIRM_WITH_CODE"
   }
