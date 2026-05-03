@@ -282,6 +282,9 @@ resource "aws_apigatewayv2_route" "chat" {
   api_id    = aws_apigatewayv2_api.chat.id
   route_key = "POST /chat"
   target    = "integrations/${aws_apigatewayv2_integration.chat.id}"
+
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.cognito.id
 }
 
 resource "aws_apigatewayv2_stage" "chat" {
@@ -388,4 +391,71 @@ output "chat_url" {
 output "chat_api_endpoint" {
   value       = "${aws_apigatewayv2_api.chat.api_endpoint}/chat"
   description = "API Gateway endpoint for the chat agent"
+}
+
+# --- COGNITO SECURITY BLOCK ---
+
+resource "random_id" "id" {
+  byte_length = 4
+}
+
+resource "aws_cognito_user_pool" "pool" {
+  name                     = "video-inference-pool-v2"
+  auto_verified_attributes = ["email"]
+  
+  #This makes the UI ask for "Email" instead of "Username"
+  username_attributes      = ["email"]
+
+  admin_create_user_config {
+    allow_admin_create_user_only = false
+  }
+
+  #Ensures the 6-digit code is sent to the user's email
+  verification_message_template {
+    default_email_option = "CONFIRM_WITH_CODE"
+  }
+}
+
+resource "aws_cognito_user_pool_client" "client" {
+  name         = "video-inference-client"
+  user_pool_id = aws_cognito_user_pool.pool.id
+
+  explicit_auth_flows = ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"]
+
+  access_token_validity  = 60
+  id_token_validity      = 60
+  refresh_token_validity = 30
+  
+  token_validity_units {
+    access_token  = "minutes"
+    id_token      = "minutes"
+    refresh_token = "days"
+  }
+
+  allowed_oauth_flows_user_pool_client = true
+  allowed_oauth_flows                  = ["implicit"]
+  allowed_oauth_scopes                 = ["email", "openid", "profile"]
+  supported_identity_providers         = ["COGNITO"]
+
+  callback_urls = [
+  "https://${aws_s3_bucket.frontend.bucket_regional_domain_name}/index.html",
+  "https://localhost:3000",
+  "https://example.com"
+  ]
+}
+
+resource "aws_cognito_user_pool_domain" "main" {
+  domain       = "video-auth-${random_id.id.hex}" 
+  user_pool_id = aws_cognito_user_pool.pool.id
+}
+
+resource "aws_apigatewayv2_authorizer" "cognito" {
+  api_id           = aws_apigatewayv2_api.chat.id
+  authorizer_type  = "JWT"
+  identity_sources = ["$request.header.Authorization"]
+  name             = "cognito-authorizer"
+  jwt_configuration {
+    audience = [aws_cognito_user_pool_client.client.id]
+    issuer   = "https://${aws_cognito_user_pool.pool.endpoint}"
+  }
 }
