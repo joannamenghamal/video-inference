@@ -4,7 +4,7 @@ import boto3
 from process_video import process_video_to_json
 
 
-# Test deployment for end-to-end demo - 2026-05-06
+#Demo recording - CI/CD pipeline test
 
 def summarize_detections(yolo_results):
     total_frames = 0
