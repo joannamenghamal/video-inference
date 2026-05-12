@@ -4,7 +4,7 @@ import boto3
 from process_video import process_video_to_json
 
 
-# demo trigger ci/cd
+# demo trigger ci/cd - github actions
 
 def summarize_detections(yolo_results):
     total_frames = 0
